@@ -346,12 +346,15 @@ class Replayer:
                     workflow_task_poller_behavior=temporalio.bridge.worker.PollerBehaviorSimpleMaximum(
                         2
                     ),
+                    workflow_task_poller_behavior_auto_enroll=False,
                     activity_task_poller_behavior=temporalio.bridge.worker.PollerBehaviorSimpleMaximum(
                         1
                     ),
+                    activity_task_poller_behavior_auto_enroll=False,
                     nexus_task_poller_behavior=temporalio.bridge.worker.PollerBehaviorSimpleMaximum(
                         1
                     ),
+                    nexus_task_poller_behavior_auto_enroll=False,
                     plugins=[plugin.name() for plugin in self.plugins],
                     storage_drivers=storage_driver_types,
                 ),

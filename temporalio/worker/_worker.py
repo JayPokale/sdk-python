@@ -142,15 +142,9 @@ class Worker:
         disable_safe_workflow_eviction: bool = False,
         deployment_config: WorkerDeploymentConfig | None = None,
         patch_activation_callback: Callable[[PatchActivationInput], bool] | None = None,
-        workflow_task_poller_behavior: PollerBehavior = PollerBehaviorSimpleMaximum(
-            maximum=5
-        ),
-        activity_task_poller_behavior: PollerBehavior = PollerBehaviorSimpleMaximum(
-            maximum=5
-        ),
-        nexus_task_poller_behavior: PollerBehavior = PollerBehaviorSimpleMaximum(
-            maximum=5
-        ),
+        workflow_task_poller_behavior: PollerBehavior | None = None,
+        activity_task_poller_behavior: PollerBehavior | None = None,
+        nexus_task_poller_behavior: PollerBehavior | None = None,
         disable_payload_error_limit: bool = False,
         max_workflow_task_external_storage_concurrency: int = _DEFAULT_WORKFLOW_TASK_EXTERNAL_STORAGE_CONCURRENCY,
     ) -> None:
@@ -333,11 +327,19 @@ class Worker:
                 patch or ``False`` to leave it inactive.
                 WARNING: This is an experimental feature and may change in the future.
             workflow_task_poller_behavior: Specify the behavior of workflow task polling.
-                Defaults to a 5-poller maximum.
+                Defaults to a 5-poller maximum. When left unset (and
+                ``max_concurrent_workflow_task_polls`` is also unset), the worker becomes eligible
+                for automatic enrollment into poller autoscaling if the namespace advertises
+                support for it.
             activity_task_poller_behavior: Specify the behavior of activity task polling.
-                Defaults to a 5-poller maximum.
+                Defaults to a 5-poller maximum. When left unset (and
+                ``max_concurrent_activity_task_polls`` is also unset), the worker becomes eligible
+                for automatic enrollment into poller autoscaling if the namespace advertises
+                support for it.
             nexus_task_poller_behavior: Specify the behavior of Nexus task polling.
-                Defaults to a 5-poller maximum.
+                Defaults to a 5-poller maximum. When left unset, the worker becomes eligible for
+                automatic enrollment into poller autoscaling if the namespace advertises support
+                for it.
             disable_payload_error_limit: If true, payload and memo error limit checks
                 are disabled in the worker, allowing payloads and memos that are above
                 the server error limit to be submitted to the Temporal server. If false,
@@ -628,18 +630,38 @@ class Worker:
                 build_id_no_versioning=build_id
             )
 
+        # A poller is eligible for automatic enrollment into poller autoscaling when the user
+        # configured neither a fixed poll count nor an explicit poller behavior for it. When it is
+        # eligible we still pass a default behavior so the poller keeps its current behavior against
+        # servers that do not advertise the capability.
         workflow_task_poller_behavior = config["workflow_task_poller_behavior"]  # type: ignore[reportTypedDictNotRequiredAccess]
         max_workflow_polls = config.get("max_concurrent_workflow_task_polls")
+        workflow_task_poller_behavior_auto_enroll = (
+            workflow_task_poller_behavior is None and not max_workflow_polls
+        )
         if max_workflow_polls:
             workflow_task_poller_behavior = PollerBehaviorSimpleMaximum(
                 maximum=max_workflow_polls
             )
+        elif workflow_task_poller_behavior is None:
+            workflow_task_poller_behavior = PollerBehaviorSimpleMaximum(maximum=5)
+
         activity_task_poller_behavior = config["activity_task_poller_behavior"]  # type: ignore[reportTypedDictNotRequiredAccess]
         max_activity_polls = config.get("max_concurrent_activity_task_polls")
+        activity_task_poller_behavior_auto_enroll = (
+            activity_task_poller_behavior is None and not max_activity_polls
+        )
         if max_activity_polls:
             activity_task_poller_behavior = PollerBehaviorSimpleMaximum(
                 maximum=max_activity_polls
             )
+        elif activity_task_poller_behavior is None:
+            activity_task_poller_behavior = PollerBehaviorSimpleMaximum(maximum=5)
+
+        nexus_task_poller_behavior = config["nexus_task_poller_behavior"]  # type: ignore[reportTypedDictNotRequiredAccess]
+        nexus_task_poller_behavior_auto_enroll = nexus_task_poller_behavior is None
+        if nexus_task_poller_behavior is None:
+            nexus_task_poller_behavior = PollerBehaviorSimpleMaximum(maximum=5)
 
         deduped_plugin_names = list({plugin.name() for plugin in self._plugins})
         deduped_storage_driver_types = {
@@ -707,10 +729,11 @@ class Worker:
                 ),
                 versioning_strategy=versioning_strategy,
                 workflow_task_poller_behavior=workflow_task_poller_behavior._to_bridge(),
+                workflow_task_poller_behavior_auto_enroll=workflow_task_poller_behavior_auto_enroll,
                 activity_task_poller_behavior=activity_task_poller_behavior._to_bridge(),
-                nexus_task_poller_behavior=config[
-                    "nexus_task_poller_behavior"
-                ]._to_bridge(),  # type: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess]
+                activity_task_poller_behavior_auto_enroll=activity_task_poller_behavior_auto_enroll,
+                nexus_task_poller_behavior=nexus_task_poller_behavior._to_bridge(),
+                nexus_task_poller_behavior_auto_enroll=nexus_task_poller_behavior_auto_enroll,
                 plugins=deduped_plugin_names,
                 storage_drivers=deduped_storage_driver_types,
                 disable_payload_error_limit=config.get(
@@ -1050,9 +1073,9 @@ class WorkerConfig(TypedDict, total=False):
     disable_safe_workflow_eviction: bool
     deployment_config: WorkerDeploymentConfig | None
     patch_activation_callback: Callable[[PatchActivationInput], bool] | None
-    workflow_task_poller_behavior: PollerBehavior
-    activity_task_poller_behavior: PollerBehavior
-    nexus_task_poller_behavior: PollerBehavior
+    workflow_task_poller_behavior: PollerBehavior | None
+    activity_task_poller_behavior: PollerBehavior | None
+    nexus_task_poller_behavior: PollerBehavior | None
     disable_payload_error_limit: bool
     max_workflow_task_external_storage_concurrency: int
 

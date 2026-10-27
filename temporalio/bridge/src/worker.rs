@@ -49,8 +49,10 @@ pub struct WorkerConfig {
     max_cached_workflows: usize,
     tuner: TunerHolder,
     workflow_task_poller_behavior: PollerBehavior,
+    workflow_task_poller_behavior_auto_enroll: bool,
     nonsticky_to_sticky_poll_ratio: f32,
     activity_task_poller_behavior: PollerBehavior,
+    activity_task_poller_behavior_auto_enroll: bool,
     task_types: WorkerTaskTypes,
     sticky_queue_schedule_to_start_timeout_millis: u64,
     max_heartbeat_throttle_interval_millis: u64,
@@ -62,6 +64,7 @@ pub struct WorkerConfig {
     nondeterminism_as_workflow_fail: bool,
     nondeterminism_as_workflow_fail_for_types: HashSet<String>,
     nexus_task_poller_behavior: PollerBehavior,
+    nexus_task_poller_behavior_auto_enroll: bool,
     plugins: Vec<String>,
     storage_drivers: HashSet<String>,
     disable_payload_error_limit: bool,
@@ -718,16 +721,25 @@ fn convert_worker_config(
 ) -> PyResult<temporalio_sdk_core::WorkerConfig> {
     let converted_tuner = convert_tuner_holder(conf.tuner, task_locals)?;
     let converted_versioning_strategy = convert_versioning_strategy(conf.versioning_strategy);
+    // Leave the poller behavior unset (None) when the worker is eligible for auto-enroll, so core
+    // resolves it from the namespace's poller_autoscaling_auto_enroll capability. Otherwise pass
+    // the explicitly-configured behavior through.
+    let workflow_task_poller_behavior = (!conf.workflow_task_poller_behavior_auto_enroll)
+        .then(|| conf.workflow_task_poller_behavior.into());
+    let activity_task_poller_behavior = (!conf.activity_task_poller_behavior_auto_enroll)
+        .then(|| conf.activity_task_poller_behavior.into());
+    let nexus_task_poller_behavior = (!conf.nexus_task_poller_behavior_auto_enroll)
+        .then(|| conf.nexus_task_poller_behavior.into());
     temporalio_sdk_core::WorkerConfig::builder()
         .namespace(conf.namespace)
         .task_queue(conf.task_queue)
         .versioning_strategy(converted_versioning_strategy)
         .maybe_client_identity_override(conf.identity_override)
         .max_cached_workflows(conf.max_cached_workflows)
-        .workflow_task_poller_behavior(conf.workflow_task_poller_behavior.into())
+        .maybe_workflow_task_poller_behavior(workflow_task_poller_behavior)
         .tuner(Arc::new(converted_tuner))
         .nonsticky_to_sticky_poll_ratio(conf.nonsticky_to_sticky_poll_ratio)
-        .activity_task_poller_behavior(conf.activity_task_poller_behavior.into())
+        .maybe_activity_task_poller_behavior(activity_task_poller_behavior)
         .task_types(conf.task_types.into())
         .sticky_queue_schedule_to_start_timeout(Duration::from_millis(
             conf.sticky_queue_schedule_to_start_timeout_millis,
@@ -763,7 +775,7 @@ fn convert_worker_config(
                 })
                 .collect(),
         )
-        .nexus_task_poller_behavior(conf.nexus_task_poller_behavior.into())
+        .maybe_nexus_task_poller_behavior(nexus_task_poller_behavior)
         .plugins(
             conf.plugins
                 .into_iter()
